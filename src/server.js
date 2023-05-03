@@ -2,7 +2,9 @@ import express from "express";
 // express는 http의 서버
 import http from "http";
 // import WebSocket from "ws";
-import SocketIo from "socket.io";
+// import SocketIo from "socket.io";
+import { instrument } from "@socket.io/admin-ui";
+import { Server } from "socket.io";
 
 const app = express();
 
@@ -20,7 +22,16 @@ const handleListen = () => console.log(`Listening on http://localhost:3000`);
 // http 서버,  같은 서버에 http, ws
 const httpServer = http.createServer(app);
 // const wss = new WebSocket.Server({ server });
-const wsServer = SocketIo(httpServer);
+// const wsServer = SocketIo(httpServer);
+const wsServer = new Server(httpServer, {
+  cors: {
+    origin: ["https://admin.socket.io"],
+    credentials: true,
+  },
+});
+instrument(wsServer, {
+  auth: false,
+});
 
 function publicRooms() {
   const sids = wsServer.sockets.adapter.sids;
@@ -35,6 +46,10 @@ function publicRooms() {
   return publicRooms;
 }
 
+function countRoom(roomName) {
+  return wsServer.sockets.adapter.rooms.get(roomName)?.size;
+}
+
 // 연결을 받음
 wsServer.on("connection", (socket) => {
   wsServer.socketsJoin("announcement"); // socket이 연결되었을 때 모든 socket이 announcement방에 입장
@@ -44,6 +59,7 @@ wsServer.on("connection", (socket) => {
     console.log(`Socket Event : ${event}`);
   });
   console.log(socket);
+
   socket.on("enter_room", (roomName, done) => {
     console.log(`socket.id : ${socket.id}`);
     console.log(socket.rooms); //set{<socket.id}
@@ -52,15 +68,17 @@ wsServer.on("connection", (socket) => {
     console.log(socket.rooms); //다른 room 이름
     done();
 
-    socket.to(roomName).emit("welcome", socket.nickname);
+    socket.to(roomName).emit("welcome", socket.nickname, countRoom(roomName));
     wsServer.sockets.emit("room_change", publicRooms()); // send message to all sockets
   });
   socket.on("disconnecting", () => {
     // disconnecting event는 socket이 방을 떠나기 바로 직전에 발생
     socket.rooms.forEach((room) => {
-      socket.to(room).emit("bye", socket.nickname);
-      wsServer.sockets.emit("room_change", publicRooms()); // send message to all sockets
+      socket.to(room).emit("bye", socket.nickname, countRoom(room) - 0);
     });
+  });
+  socket.on("disconnect", () => {
+    wsServer.sockets.emit("room_change", publicRooms()); // send message to all sockets
   });
 
   socket.on("new_message", (msg, room, done) => {
